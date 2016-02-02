@@ -71,12 +71,13 @@
 -export([store_proc_name/1, store_proc_name/2]).
 -export([moving_average/4]).
 -export([get_env/3]).
+-export([get_channel_operation_timeout/0]).
 -export([random/1]).
 
 %% Horrible macro to use in guards
 -define(IS_BENIGN_EXIT(R),
         R =:= noproc; R =:= noconnection; R =:= nodedown; R =:= normal;
-            R =:= shutdown).
+            R =:= shutdown; R =:= timeout).
 
 %%----------------------------------------------------------------------------
 
@@ -260,7 +261,7 @@
 -spec(moving_average/4 :: (float(), float(), float(), float() | 'undefined')
                           -> float()).
 -spec(get_env/3 :: (atom(), atom(), term())  -> term()).
-
+-spec(get_channel_operation_timeout/0 :: () -> non_neg_integer()).
 -spec(random/1 :: (non_neg_integer()) -> non_neg_integer()).
 
 -endif.
@@ -1117,6 +1118,12 @@ get_env(Application, Key, Def) ->
         {ok, Val} -> Val;
         undefined -> Def
     end.
+
+get_channel_operation_timeout() ->
+    Default = (net_kernel:get_net_ticktime() + 10) * 1000,
+    {ok, Val} = application:get_env(rabbit, channel_operation_timeout,
+                                    Default),
+    Val.
 
 moving_average(_Time, _HalfLife, Next, undefined) ->
     Next;
