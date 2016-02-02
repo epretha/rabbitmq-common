@@ -31,7 +31,7 @@
 -export([consumers/1, consumers_all/1,  consumers_all/3, consumer_info_keys/0]).
 -export([basic_get/4, basic_consume/10, basic_cancel/4, notify_decorators/1]).
 -export([notify_sent/2, notify_sent_queue_down/1, resume/2]).
--export([notify_down_all/2, activate_limit_all/2, credit/5]).
+-export([notify_down_all/2, notify_down_all/3, activate_limit_all/2, credit/5]).
 -export([on_node_up/1, on_node_down/1]).
 -export([update/2, store_queue/1, update_decorators/1, policy_changed/2]).
 -export([start_mirroring/1, stop_mirroring/1, sync_mirrors/1,
@@ -160,6 +160,8 @@
 -spec(ack/3 :: (pid(), [msg_id()], pid()) -> 'ok').
 -spec(reject/4 :: (pid(), [msg_id()], boolean(), pid()) -> 'ok').
 -spec(notify_down_all/2 :: (qpids(), pid()) -> ok_or_errors()).
+-spec(notify_down_all/3 :: (qpids(), pid(), non_neg_integer())
+                           -> ok_or_errors()).
 -spec(activate_limit_all/2 :: (qpids(), pid()) -> ok_or_errors()).
 -spec(basic_get/4 :: (rabbit_types:amqqueue(), pid(), boolean(), pid()) ->
                           {'ok', non_neg_integer(), qmsg()} | 'empty').
@@ -583,12 +585,13 @@ info_keys() -> rabbit_amqqueue_process:info_keys().
 map(Qs, F) -> rabbit_misc:filter_exit_map(F, Qs).
 
 info(Q = #amqqueue{ state = crashed }) -> info_down(Q, crashed);
-info(#amqqueue{ pid = QPid }) -> delegate:call(QPid, info).
+info(#amqqueue{ pid = QPid }) ->
+    delegate:call(QPid, info, ?CHANNEL_OPERATION_TIMEOUT).
 
 info(Q = #amqqueue{ state = crashed }, Items) ->
     info_down(Q, Items, crashed);
 info(#amqqueue{ pid = QPid }, Items) ->
-    case delegate:call(QPid, {info, Items}) of
+    case delegate:call(QPid, {info, Items}, ?CHANNEL_OPERATION_TIMEOUT) of
         {ok, Res}      -> Res;
         {error, Error} -> throw(Error)
     end.
@@ -636,7 +639,8 @@ force_event_refresh(Ref) ->
 notify_policy_changed(#amqqueue{pid = QPid}) ->
     gen_server2:cast(QPid, policy_changed).
 
-consumers(#amqqueue{ pid = QPid }) -> delegate:call(QPid, consumers).
+consumers(#amqqueue{ pid = QPid }) -> delegate:call(QPid, consumers,
+                                                    ?CHANNEL_OPERATION_TIMEOUT).
 
 consumer_info_keys() -> ?CONSUMER_INFO_KEYS.
 
@@ -660,14 +664,16 @@ get_queue_consumer_info(Q, ConsumerInfoKeys) ->
                   AckRequired, Prefetch, Args]) ||
           {ChPid, CTag, AckRequired, Prefetch, Args} <- consumers(Q)]).
 
-stat(#amqqueue{pid = QPid}) -> delegate:call(QPid, stat).
+stat(#amqqueue{pid = QPid}) -> delegate:call(QPid, stat,
+                                             ?CHANNEL_OPERATION_TIMEOUT).
 
 delete_immediately(QPids) ->
     [gen_server2:cast(QPid, delete_immediately) || QPid <- QPids],
     ok.
 
 delete(#amqqueue{ pid = QPid }, IfUnused, IfEmpty) ->
-    delegate:call(QPid, {delete, IfUnused, IfEmpty}).
+    delegate:call(QPid, {delete, IfUnused, IfEmpty},
+                  ?CHANNEL_OPERATION_TIMEOUT).
 
 delete_crashed(#amqqueue{ pid = QPid } = Q) ->
     ok = rpc:call(node(QPid), ?MODULE, delete_crashed_internal, [Q]).
@@ -677,9 +683,11 @@ delete_crashed_internal(Q = #amqqueue{ name = QName }) ->
     BQ:delete_crashed(Q),
     ok = internal_delete(QName).
 
-purge(#amqqueue{ pid = QPid }) -> delegate:call(QPid, purge).
+purge(#amqqueue{ pid = QPid }) -> delegate:call(QPid, purge,
+                                                ?CHANNEL_OPERATION_TIMEOUT).
 
-requeue(QPid, MsgIds, ChPid) -> delegate:call(QPid, {requeue, MsgIds, ChPid}).
+requeue(QPid, MsgIds, ChPid) -> delegate:call(QPid, {requeue, MsgIds, ChPid},
+                                              ?CHANNEL_OPERATION_TIMEOUT).
 
 ack(QPid, MsgIds, ChPid) -> delegate:cast(QPid, {ack, MsgIds, ChPid}).
 
@@ -687,7 +695,10 @@ reject(QPid, Requeue, MsgIds, ChPid) ->
     delegate:cast(QPid, {reject, Requeue, MsgIds, ChPid}).
 
 notify_down_all(QPids, ChPid) ->
-    {_, Bads} = delegate:call(QPids, {notify_down, ChPid}),
+    notify_down_all(QPids, ChPid, ?CHANNEL_OPERATION_TIMEOUT).
+
+notify_down_all(QPids, ChPid, Timeout) ->
+    {_, Bads} = delegate:call(QPids, {notify_down, ChPid}, Timeout),
     case lists:filter(
            fun ({_Pid, {exit, {R, _}, _}}) -> rabbit_misc:is_abnormal_exit(R);
                ({_Pid, _})                 -> false
@@ -703,7 +714,8 @@ credit(#amqqueue{pid = QPid}, ChPid, CTag, Credit, Drain) ->
     delegate:cast(QPid, {credit, ChPid, CTag, Credit, Drain}).
 
 basic_get(#amqqueue{pid = QPid}, ChPid, NoAck, LimiterPid) ->
-    delegate:call(QPid, {basic_get, ChPid, NoAck, LimiterPid}).
+    delegate:call(QPid, {basic_get, ChPid, NoAck, LimiterPid},
+                  ?CHANNEL_OPERATION_TIMEOUT).
 
 basic_consume(#amqqueue{pid = QPid, name = QName}, NoAck, ChPid, LimiterPid,
               LimiterActive, ConsumerPrefetchCount, ConsumerTag,
@@ -711,10 +723,11 @@ basic_consume(#amqqueue{pid = QPid, name = QName}, NoAck, ChPid, LimiterPid,
     ok = check_consume_arguments(QName, Args),
     delegate:call(QPid, {basic_consume, NoAck, ChPid, LimiterPid, LimiterActive,
                          ConsumerPrefetchCount, ConsumerTag, ExclusiveConsume,
-                         Args, OkMsg}).
+                         Args, OkMsg}, ?CHANNEL_OPERATION_TIMEOUT).
 
 basic_cancel(#amqqueue{pid = QPid}, ChPid, ConsumerTag, OkMsg) ->
-    delegate:call(QPid, {basic_cancel, ChPid, ConsumerTag, OkMsg}).
+    delegate:call(QPid, {basic_cancel, ChPid, ConsumerTag, OkMsg},
+                  ?CHANNEL_OPERATION_TIMEOUT).
 
 notify_decorators(#amqqueue{pid = QPid}) ->
     delegate:cast(QPid, notify_decorators).
@@ -831,8 +844,10 @@ set_maximum_since_use(QPid, Age) ->
 start_mirroring(QPid) -> ok = delegate:cast(QPid, start_mirroring).
 stop_mirroring(QPid)  -> ok = delegate:cast(QPid, stop_mirroring).
 
-sync_mirrors(QPid)        -> delegate:call(QPid, sync_mirrors).
-cancel_sync_mirrors(QPid) -> delegate:call(QPid, cancel_sync_mirrors).
+sync_mirrors(QPid)        -> delegate:call(QPid, sync_mirrors,
+                                           ?CHANNEL_OPERATION_TIMEOUT).
+cancel_sync_mirrors(QPid) -> delegate:call(QPid, cancel_sync_mirrors,
+                                           ?CHANNEL_OPERATION_TIMEOUT).
 
 on_node_up(Node) ->
     ok = rabbit_misc:execute_mnesia_transaction(
