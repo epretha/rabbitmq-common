@@ -1124,9 +1124,7 @@ get_channel_operation_timeout() ->
     %% give allowance for any internode down messages to be received
     %% first, before channel_operation_timeout elapses.
     Default = (net_kernel:get_net_ticktime() + 10) * 1000,
-    {ok, Val} = application:get_env(rabbit, channel_operation_timeout,
-                                    Default),
-    Val.
+    application:get_env(rabbit, channel_operation_timeout, Default).
 
 moving_average(_Time, _HalfLife, Next, undefined) ->
     Next;
