@@ -122,6 +122,9 @@
                     -> [rabbit_types:infos()]).
 -spec(info_all/4 :: (rabbit_types:vhost(), rabbit_types:info_keys(),
                      reference(), pid()) -> 'ok').
+-spec(get_info_about_down_queues/2 :: (rabbit_types:vhost(),
+                                       rabbit_types:info_keys())
+                                      -> [rabbit_types:infos()]).
 -spec(force_event_refresh/1 :: (reference()) -> 'ok').
 -spec(notify_policy_changed/1 :: (rabbit_types:amqqueue()) -> 'ok').
 -spec(consumers/1 :: (rabbit_types:amqqueue())
@@ -620,6 +623,9 @@ info_all(VHostPath) ->
 info_all(VHostPath, Items) ->
     map(list(VHostPath), fun (Q) -> info(Q, Items) end) ++
         map(list_down(VHostPath), fun (Q) -> info_down(Q, Items, down) end).
+
+get_info_about_down_queues(VHostPath, Items) ->
+    map(list_down(VHostPath), fun (Q) -> info_down(Q, Items, down) end).
 
 info_all(VHostPath, Items, Ref, AggregatorPid) ->
     rabbit_control_misc:emitting_map_with_exit_handler(
