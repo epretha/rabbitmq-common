@@ -27,6 +27,7 @@
 -export([list/0, list/1, info_keys/0, info/1, info/2, info_all/1, info_all/2,
          info_all/4]).
 -export([list_down/1]).
+-export([get_info_about_down_queues/4, get_info_about_down_queues/2]).
 -export([force_event_refresh/1, notify_policy_changed/1]).
 -export([consumers/1, consumers_all/1,  consumers_all/3, consumer_info_keys/0]).
 -export([basic_get/4, basic_consume/10, basic_cancel/4, notify_decorators/1]).
@@ -122,6 +123,11 @@
                     -> [rabbit_types:infos()]).
 -spec(info_all/4 :: (rabbit_types:vhost(), rabbit_types:info_keys(),
                      reference(), pid()) -> 'ok').
+-spec(get_info_about_down_queues/2 :: (rabbit_types:vhost(),
+                                       rabbit_types:info_keys()).
+-spec(get_info_about_down_queues/4 :: (rabbit_types:vhost(),
+                                       rabbit_types:info_keys(), reference(),
+                                      pid()) -> [rabbit_types:infos()]).
 -spec(force_event_refresh/1 :: (reference()) -> 'ok').
 -spec(notify_policy_changed/1 :: (rabbit_types:amqqueue()) -> 'ok').
 -spec(consumers/1 :: (rabbit_types:amqqueue())
@@ -578,9 +584,10 @@ list_down(VHostPath) ->
     Present = list(VHostPath),
     Durable = list(VHostPath, rabbit_durable_queue),
     PresentS = sets:from_list([N || #amqqueue{name = N} <- Present]),
-    sets:to_list(sets:filter(fun (#amqqueue{name = N}) ->
+    DownQueues = sets:to_list(sets:filter(fun (#amqqueue{name = N}) ->
                                      not sets:is_element(N, PresentS)
-                             end, sets:from_list(Durable))).
+                                          end, sets:from_list(Durable))),
+    DownQueues.
 
 info_keys() -> rabbit_amqqueue_process:info_keys().
 
@@ -631,6 +638,14 @@ info_all(VHostPath, Items, Ref, AggregatorPid) ->
     rabbit_control_misc:emitting_map_with_exit_handler(
       AggregatorPid, Ref, fun(Q) -> info_down(Q, Items) end,
       list_down(VHostPath)).
+
+get_info_about_down_queues(VirtualHostPath, Items) ->
+    map(list_down(VirtualHostPath), fun (Q) -> info_down(Q, Items, down) end).
+get_info_about_down_queues(VHostPath, Items, Ref, AggregatorPid) ->
+    io:format("To get a list of down queues.~n", []),
+    rabbit_control_misc:emitting_map_with_exit_handler(AggregatorPid, Ref,
+                                              fun(Q) -> info_down(Q, Items) end,
+                                                       list_down(VHostPath)).
 
 force_event_refresh(Ref) ->
     [gen_server2:cast(Q#amqqueue.pid,
